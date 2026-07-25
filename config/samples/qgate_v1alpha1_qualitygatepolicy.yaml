@@ -1,0 +1,9 @@
+apiVersion: qgate.qgate.io/v1alpha1
+kind: QualityGatePolicy
+metadata:
+  labels:
+    app.kubernetes.io/name: kube-qgate-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: qualitygatepolicy-sample
+spec:
+  # TODO(user): Add fields here

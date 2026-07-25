@@ -1,0 +1,4 @@
+## Append samples of your project ##
+resources:
+- qgate_v1alpha1_qualitygatepolicy.yaml
+# +kubebuilder:scaffold:manifestskustomizesamples
