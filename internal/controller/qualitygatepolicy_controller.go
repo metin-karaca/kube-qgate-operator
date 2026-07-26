@@ -28,6 +28,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
@@ -41,7 +42,8 @@ const sonarTokenSecretKey = "token"
 // QualityGatePolicyReconciler reconciles a QualityGatePolicy object
 type QualityGatePolicyReconciler struct {
 	client.Client
-	Scheme *runtime.Scheme
+	Scheme   *runtime.Scheme
+	Recorder record.EventRecorder
 }
 
 // +kubebuilder:rbac:groups=qgate.qgate.io,resources=qualitygatepolicies,verbs=get;list;watch;create;update;patch;delete
@@ -49,6 +51,7 @@ type QualityGatePolicyReconciler struct {
 // +kubebuilder:rbac:groups=qgate.qgate.io,resources=qualitygatepolicies/finalizers,verbs=update
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -113,6 +116,11 @@ func (r *QualityGatePolicyReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		Reason:  "GateStatusFetched",
 		Message: fmt.Sprintf("last SonarQube gate status: %s", gateStatus),
 	})
+
+	if policy.Spec.Mode == "Warn" && gateStatus != "OK" && r.Recorder != nil {
+		r.Recorder.Eventf(&policy, corev1.EventTypeWarning, "QualityGateFailed",
+			"SonarQube quality gate status for project %q is %q", policy.Spec.ProjectKey, gateStatus)
+	}
 
 	if err := r.Status().Update(ctx, &policy); err != nil {
 		return ctrl.Result{}, err

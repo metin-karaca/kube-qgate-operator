@@ -30,6 +30,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	qgatev1alpha1 "github.com/metin-karaca/kube-qgate-operator/api/v1alpha1"
@@ -167,5 +168,53 @@ var _ = Describe("QualityGatePolicy Controller", func() {
 		var updated qgatev1alpha1.QualityGatePolicy
 		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: policy.Name, Namespace: namespace}, &updated)).To(Succeed())
 		Expect(updated.Status.GateStatus).To(Equal("ERROR"))
+	})
+
+	It("emits a Warning event in Warn mode when the gate fails, and none in Audit mode", func() {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, `{"projectStatus":{"status":"ERROR"}}`)
+		}))
+		defer server.Close()
+
+		policy := &qgatev1alpha1.QualityGatePolicy{
+			ObjectMeta: metav1.ObjectMeta{Name: "warn-policy", Namespace: namespace},
+			Spec: qgatev1alpha1.QualityGatePolicySpec{
+				Selector:    metav1.LabelSelector{MatchLabels: map[string]string{"app": "warn-app"}},
+				SonarServer: server.URL,
+				ProjectKey:  "warn-app",
+				Mode:        "Warn",
+			},
+		}
+		Expect(k8sClient.Create(ctx, policy)).To(Succeed())
+		defer k8sClient.Delete(ctx, policy)
+
+		recorder := record.NewFakeRecorder(10)
+		r := &QualityGatePolicyReconciler{Client: k8sClient, Scheme: k8sClient.Scheme(), Recorder: recorder}
+		_, err := r.Reconcile(ctx, reconcile.Request{
+			NamespacedName: types.NamespacedName{Name: policy.Name, Namespace: namespace},
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(recorder.Events).To(Receive(ContainSubstring("QualityGateFailed")))
+
+		auditPolicy := &qgatev1alpha1.QualityGatePolicy{
+			ObjectMeta: metav1.ObjectMeta{Name: "warn-audit-control", Namespace: namespace},
+			Spec: qgatev1alpha1.QualityGatePolicySpec{
+				Selector:    metav1.LabelSelector{MatchLabels: map[string]string{"app": "warn-audit-app"}},
+				SonarServer: server.URL,
+				ProjectKey:  "warn-audit-app",
+				Mode:        "Audit",
+			},
+		}
+		Expect(k8sClient.Create(ctx, auditPolicy)).To(Succeed())
+		defer k8sClient.Delete(ctx, auditPolicy)
+
+		auditRecorder := record.NewFakeRecorder(10)
+		ar := &QualityGatePolicyReconciler{Client: k8sClient, Scheme: k8sClient.Scheme(), Recorder: auditRecorder}
+		_, err = ar.Reconcile(ctx, reconcile.Request{
+			NamespacedName: types.NamespacedName{Name: auditPolicy.Name, Namespace: namespace},
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(auditRecorder.Events).NotTo(Receive())
 	})
 })

@@ -203,8 +203,9 @@ func main() {
 	}
 
 	if err := (&controller.QualityGatePolicyReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Client:   mgr.GetClient(),
+		Scheme:   mgr.GetScheme(),
+		Recorder: mgr.GetEventRecorderFor("qualitygatepolicy-controller"),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "QualityGatePolicy")
 		os.Exit(1)
