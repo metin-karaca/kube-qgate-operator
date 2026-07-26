@@ -1,0 +1,16 @@
+kube-qgate-operator has been installed.
+
+Check the controller is running:
+  kubectl -n {{ .Release.Namespace }} get pods -l app.kubernetes.io/name={{ include "kube-qgate-operator.name" . }}
+
+Create a QualityGatePolicy (see config/samples/qgate_v1alpha1_qualitygatepolicy.yaml for an
+example):
+  kubectl apply -f my-policy.yaml
+  kubectl get qualitygatepolicy -o wide
+
+{{- if .Values.webhook.enabled }}
+Block mode is active: Deployments matched by a Block-mode policy whose last known SonarQube
+quality gate is not OK will be rejected by the admission webhook.
+{{- else }}
+Block mode is disabled (webhook.enabled=false); only Audit and Warn modes take effect.
+{{- end }}

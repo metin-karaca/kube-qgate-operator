@@ -1,0 +1,93 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "kube-qgate-operator.fullname" . }}-controller-manager
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kube-qgate-operator.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "kube-qgate-operator.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        kubectl.kubernetes.io/default-container: manager
+      labels:
+        {{- include "kube-qgate-operator.selectorLabels" . | nindent 8 }}
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      serviceAccountName: {{ include "kube-qgate-operator.serviceAccountName" . }}
+      terminationGracePeriodSeconds: 10
+      containers:
+        - name: manager
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["/manager"]
+          args:
+            - --health-probe-bind-address=:8081
+            {{- if .Values.leaderElection.enabled }}
+            - --leader-elect
+            {{- end }}
+            {{- if .Values.metrics.enabled }}
+            - --metrics-bind-address=:8443
+            {{- else }}
+            - --metrics-bind-address=0
+            {{- end }}
+            - --metrics-secure={{ .Values.metrics.secure }}
+            {{- if and .Values.webhook.enabled .Values.certManager.enabled }}
+            - --webhook-cert-path=/tmp/k8s-webhook-server/serving-certs
+            {{- end }}
+            {{- if and .Values.metrics.secure .Values.certManager.enabled }}
+            - --metrics-cert-path=/tmp/k8s-metrics-server/metrics-certs
+            {{- end }}
+          ports:
+            {{- if .Values.webhook.enabled }}
+            - containerPort: 9443
+              name: webhook-server
+              protocol: TCP
+            {{- end }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8081
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 8081
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            {{- if and .Values.webhook.enabled .Values.certManager.enabled }}
+            - mountPath: /tmp/k8s-webhook-server/serving-certs
+              name: webhook-certs
+              readOnly: true
+            {{- end }}
+            {{- if and .Values.metrics.secure .Values.certManager.enabled }}
+            - mountPath: /tmp/k8s-metrics-server/metrics-certs
+              name: metrics-certs
+              readOnly: true
+            {{- end }}
+      volumes:
+        {{- if and .Values.webhook.enabled .Values.certManager.enabled }}
+        - name: webhook-certs
+          secret:
+            secretName: {{ include "kube-qgate-operator.fullname" . }}-webhook-server-cert
+        {{- end }}
+        {{- if and .Values.metrics.secure .Values.certManager.enabled }}
+        - name: metrics-certs
+          secret:
+            secretName: {{ include "kube-qgate-operator.fullname" . }}-metrics-server-cert
+        {{- end }}

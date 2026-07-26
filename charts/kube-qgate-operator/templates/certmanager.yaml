@@ -1,0 +1,47 @@
+{{- if .Values.certManager.enabled }}
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: {{ include "kube-qgate-operator.fullname" . }}-selfsigned-issuer
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kube-qgate-operator.labels" . | nindent 4 }}
+spec:
+  selfSigned: {}
+{{- if .Values.webhook.enabled }}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ include "kube-qgate-operator.fullname" . }}-serving-cert
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kube-qgate-operator.labels" . | nindent 4 }}
+spec:
+  dnsNames:
+    - {{ include "kube-qgate-operator.fullname" . }}-webhook-service.{{ .Release.Namespace }}.svc
+    - {{ include "kube-qgate-operator.fullname" . }}-webhook-service.{{ .Release.Namespace }}.svc.cluster.local
+  issuerRef:
+    kind: Issuer
+    name: {{ include "kube-qgate-operator.fullname" . }}-selfsigned-issuer
+  secretName: {{ include "kube-qgate-operator.fullname" . }}-webhook-server-cert
+{{- end }}
+{{- if .Values.metrics.secure }}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ include "kube-qgate-operator.fullname" . }}-metrics-certs
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kube-qgate-operator.labels" . | nindent 4 }}
+spec:
+  dnsNames:
+    - {{ include "kube-qgate-operator.fullname" . }}-controller-manager-metrics-service.{{ .Release.Namespace }}.svc
+    - {{ include "kube-qgate-operator.fullname" . }}-controller-manager-metrics-service.{{ .Release.Namespace }}.svc.cluster.local
+  issuerRef:
+    kind: Issuer
+    name: {{ include "kube-qgate-operator.fullname" . }}-selfsigned-issuer
+  secretName: {{ include "kube-qgate-operator.fullname" . }}-metrics-server-cert
+{{- end }}
+{{- end }}

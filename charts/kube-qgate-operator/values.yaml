@@ -1,0 +1,42 @@
+image:
+  repository: ghcr.io/metin-karaca/kube-qgate-operator
+  tag: ""
+  pullPolicy: IfNotPresent
+
+replicaCount: 1
+
+leaderElection:
+  enabled: true
+
+resources:
+  limits:
+    cpu: 500m
+    memory: 128Mi
+  requests:
+    cpu: 10m
+    memory: 64Mi
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+# Secure metrics endpoint served over HTTPS with authn/authz.
+metrics:
+  enabled: true
+  secure: true
+  serviceMonitor:
+    enabled: false
+
+# Block-mode validating admission webhook on Deployments.
+webhook:
+  enabled: true
+
+# Required when webhook.enabled or metrics.secure: issues self-signed TLS
+# certificates for the webhook and metrics servers.
+certManager:
+  enabled: true
+
+# Restricts /metrics ingress to namespaces labeled "metrics: enabled".
+networkPolicy:
+  enabled: true
