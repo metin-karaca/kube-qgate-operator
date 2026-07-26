@@ -24,6 +24,7 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -105,6 +106,7 @@ var _ = Describe("QualityGatePolicy Controller", func() {
 		Expect(updated.Status.LastChecked).NotTo(BeNil())
 		Expect(updated.Status.MatchedWorkloads).To(ConsistOf("ok-app"))
 		Expect(gotAuthHeader).NotTo(BeEmpty())
+		Expect(testutil.ToFloat64(qualityGateStatus.WithLabelValues(namespace, "ok-policy", "ok-app"))).To(Equal(1.0))
 
 		readyCond := meta.FindStatusCondition(updated.Status.Conditions, "Ready")
 		Expect(readyCond).NotTo(BeNil())
@@ -168,6 +170,7 @@ var _ = Describe("QualityGatePolicy Controller", func() {
 		var updated qgatev1alpha1.QualityGatePolicy
 		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: policy.Name, Namespace: namespace}, &updated)).To(Succeed())
 		Expect(updated.Status.GateStatus).To(Equal("ERROR"))
+		Expect(testutil.ToFloat64(qualityGateStatus.WithLabelValues(namespace, "error-policy", "error-app"))).To(Equal(0.0))
 	})
 
 	It("emits a Warning event in Warn mode when the gate fails, and none in Audit mode", func() {

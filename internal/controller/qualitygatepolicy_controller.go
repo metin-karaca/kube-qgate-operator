@@ -117,6 +117,12 @@ func (r *QualityGatePolicyReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		Message: fmt.Sprintf("last SonarQube gate status: %s", gateStatus),
 	})
 
+	gaugeValue := 0.0
+	if gateStatus == "OK" {
+		gaugeValue = 1.0
+	}
+	qualityGateStatus.WithLabelValues(policy.Namespace, policy.Name, policy.Spec.ProjectKey).Set(gaugeValue)
+
 	if policy.Spec.Mode == "Warn" && gateStatus != "OK" && r.Recorder != nil {
 		r.Recorder.Eventf(&policy, corev1.EventTypeWarning, "QualityGateFailed",
 			"SonarQube quality gate status for project %q is %q", policy.Spec.ProjectKey, gateStatus)
