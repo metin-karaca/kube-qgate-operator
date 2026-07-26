@@ -6,4 +6,9 @@ metadata:
     app.kubernetes.io/managed-by: kustomize
   name: qualitygatepolicy-sample
 spec:
-  # TODO(user): Add fields here
+  selector:
+    matchLabels:
+      app: kube-qgate-operator
+  sonarServer: http://localhost:9000
+  projectKey: kube-qgate-operator
+  mode: Audit

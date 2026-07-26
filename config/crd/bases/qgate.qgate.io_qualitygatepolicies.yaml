@@ -39,6 +39,16 @@ spec:
           spec:
             description: QualityGatePolicySpec defines the desired state of QualityGatePolicy.
             properties:
+              failurePolicy:
+                default: Fail
+                description: |-
+                  FailurePolicy governs Block-mode behavior when the gate status has never been
+                  successfully determined yet. Fail denies the request (fail-closed); Ignore allows it
+                  (fail-open).
+                enum:
+                - Fail
+                - Ignore
+                type: string
               mode:
                 default: Audit
                 description: 'Mode, represents how the gate result is applied: Audit,
@@ -100,6 +110,22 @@ spec:
               sonarServer:
                 description: SonarServer, represents SonarQube's base URL.
                 type: string
+              sonarTokenSecretRef:
+                description: |-
+                  SonarTokenSecretRef references a Secret (in the same namespace) whose "token" key holds
+                  the SonarQube user token to use for authenticated requests. Omit for anonymous access.
+                properties:
+                  name:
+                    default: ""
+                    description: |-
+                      Name of the referent.
+                      This field is effectively required, but due to backwards compatibility is
+                      allowed to be empty. Instances of this type with an empty value here are
+                      almost certainly wrong.
+                      More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                    type: string
+                type: object
+                x-kubernetes-map-type: atomic
             required:
             - projectKey
             - selector
@@ -175,6 +201,12 @@ spec:
                   SonarQube.
                 format: date-time
                 type: string
+              matchedWorkloads:
+                description: MatchedWorkloads lists the names of Deployments currently
+                  matched by Spec.Selector.
+                items:
+                  type: string
+                type: array
             type: object
         type: object
     served: true

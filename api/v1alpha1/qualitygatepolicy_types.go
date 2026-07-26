@@ -17,6 +17,7 @@ limitations under the License.
 package v1alpha1
 
 import (
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -38,6 +39,17 @@ type QualityGatePolicySpec struct {
 	// +kubebuilder:validation:Enum=Audit;Warn;Block
 	// +kubebuilder:default=Audit
 	Mode string `json:"mode,omitempty"`
+
+	// SonarTokenSecretRef references a Secret (in the same namespace) whose "token" key holds
+	// the SonarQube user token to use for authenticated requests. Omit for anonymous access.
+	SonarTokenSecretRef *corev1.LocalObjectReference `json:"sonarTokenSecretRef,omitempty"`
+
+	// FailurePolicy governs Block-mode behavior when the gate status has never been
+	// successfully determined yet. Fail denies the request (fail-closed); Ignore allows it
+	// (fail-open).
+	// +kubebuilder:validation:Enum=Fail;Ignore
+	// +kubebuilder:default=Fail
+	FailurePolicy string `json:"failurePolicy,omitempty"`
 }
 
 // QualityGatePolicyStatus defines the observed state of QualityGatePolicy.
@@ -50,6 +62,9 @@ type QualityGatePolicyStatus struct {
 
 	// Conditions holds the observed status of this policy in the standard Kubernetes condition format.
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
+
+	// MatchedWorkloads lists the names of Deployments currently matched by Spec.Selector.
+	MatchedWorkloads []string `json:"matchedWorkloads,omitempty"`
 }
 
 // +kubebuilder:object:root=true
