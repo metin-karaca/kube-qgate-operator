@@ -39,6 +39,7 @@ import (
 
 	qgatev1alpha1 "github.com/metin-karaca/kube-qgate-operator/api/v1alpha1"
 	"github.com/metin-karaca/kube-qgate-operator/internal/controller"
+	webhookv1alpha1 "github.com/metin-karaca/kube-qgate-operator/internal/webhook/v1alpha1"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -208,6 +209,10 @@ func main() {
 		Recorder: mgr.GetEventRecorderFor("qualitygatepolicy-controller"),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "QualityGatePolicy")
+		os.Exit(1)
+	}
+	if err := webhookv1alpha1.SetupDeploymentWebhookWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create webhook", "webhook", "Deployment")
 		os.Exit(1)
 	}
 	// +kubebuilder:scaffold:builder
