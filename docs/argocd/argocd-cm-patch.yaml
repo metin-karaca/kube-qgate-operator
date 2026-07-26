@@ -1,0 +1,44 @@
+# Registers health-check.lua as ArgoCD's health check for QualityGatePolicy.
+#
+# Apply with:
+#   kubectl patch configmap argocd-cm -n argocd --patch-file docs/argocd/argocd-cm-patch.yaml
+#
+# or merge the resource.customizations.health.qgate.qgate.io_QualityGatePolicy
+# key into your own argocd-cm manifest (e.g. the one managed by the
+# argo-cd Helm chart's configs.cm value).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cm
+  namespace: argocd
+  labels:
+    app.kubernetes.io/part-of: argocd
+data:
+  resource.customizations.health.qgate.qgate.io_QualityGatePolicy: |
+    hs = {}
+
+    if obj.status ~= nil then
+      if obj.status.conditions ~= nil then
+        for i, condition in ipairs(obj.status.conditions) do
+          if condition.type == "Ready" and condition.status == "False" then
+            hs.status = "Degraded"
+            hs.message = condition.message
+            return hs
+          end
+        end
+      end
+
+      if obj.status.gateStatus == "OK" then
+        hs.status = "Healthy"
+        hs.message = "SonarQube quality gate is OK"
+        return hs
+      elseif obj.status.gateStatus ~= nil and obj.status.gateStatus ~= "" then
+        hs.status = "Degraded"
+        hs.message = "SonarQube quality gate is " .. obj.status.gateStatus
+        return hs
+      end
+    end
+
+    hs.status = "Progressing"
+    hs.message = "Waiting for the controller to determine the quality gate status"
+    return hs

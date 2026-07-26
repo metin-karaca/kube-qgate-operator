@@ -22,6 +22,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -257,17 +258,140 @@ var _ = Describe("Manager", Ordered, func() {
 		})
 
 		// +kubebuilder:scaffold:e2e-webhooks-checks
+	})
 
-		// TODO: Customize the e2e test suite with scenarios specific to your project.
-		// Consider applying sample/CR(s) and check their status and/or verifying
-		// the reconciliation by using the metrics, i.e.:
-		// metricsOutput := getMetricsOutput()
-		// Expect(metricsOutput).To(ContainSubstring(
-		//    fmt.Sprintf(`controller_runtime_reconcile_total{controller="%s",result="success"} 1`,
-		//    strings.ToLower(<Kind>),
-		// ))
+	Context("QualityGatePolicy", Ordered, func() {
+		const testNamespace = "default"
+		mockDeployments := []string{"mock-sonar-ok", "mock-sonar-error"}
+
+		BeforeAll(func() {
+			By("deploying mock SonarQube servers returning fixed OK/ERROR gate statuses")
+			responses := map[string]string{
+				"mock-sonar-ok":    `{"projectStatus":{"status":"OK"}}`,
+				"mock-sonar-error": `{"projectStatus":{"status":"ERROR"}}`,
+			}
+			for _, name := range mockDeployments {
+				cmd := exec.Command("kubectl", "create", "deployment", name,
+					"--image=hashicorp/http-echo:1.0", "-n", testNamespace, "--",
+					"-listen=:5678", fmt.Sprintf("-text=%s", responses[name]))
+				_, err := utils.Run(cmd)
+				Expect(err).NotTo(HaveOccurred(), "Failed to create mock SonarQube deployment "+name)
+
+				cmd = exec.Command("kubectl", "expose", "deployment", name, "--port=5678", "-n", testNamespace)
+				_, err = utils.Run(cmd)
+				Expect(err).NotTo(HaveOccurred(), "Failed to expose mock SonarQube deployment "+name)
+
+				cmd = exec.Command("kubectl", "-n", testNamespace, "wait",
+					"--for=condition=Available", "--timeout=60s", "deployment/"+name)
+				_, err = utils.Run(cmd)
+				Expect(err).NotTo(HaveOccurred(), "Mock SonarQube deployment "+name+" did not become available")
+			}
+		})
+
+		AfterAll(func() {
+			for _, name := range mockDeployments {
+				_, _ = utils.Run(exec.Command("kubectl", "-n", testNamespace, "delete", "deployment", name, "--ignore-not-found"))
+				_, _ = utils.Run(exec.Command("kubectl", "-n", testNamespace, "delete", "service", name, "--ignore-not-found"))
+			}
+		})
+
+		It("reconciles an Audit-mode policy and records GateStatus OK", func() {
+			policyYAML := fmt.Sprintf(`apiVersion: qgate.qgate.io/v1alpha1
+kind: QualityGatePolicy
+metadata:
+  name: e2e-audit-policy
+  namespace: %s
+spec:
+  selector:
+    matchLabels:
+      app: e2e-audit-app
+  sonarServer: http://mock-sonar-ok.%s.svc.cluster.local:5678
+  projectKey: e2e-audit-app
+  mode: Audit
+`, testNamespace, testNamespace)
+			Expect(applyManifest(policyYAML)).To(Succeed())
+			defer deleteManifest(policyYAML)
+
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "-n", testNamespace, "get", "qualitygatepolicy",
+					"e2e-audit-policy", "-o", "jsonpath={.status.gateStatus}")
+				out, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(out).To(Equal("OK"))
+			}).Should(Succeed())
+		})
+
+		It("denies a Deployment via a Block-mode policy when the gate is ERROR", func() {
+			policyYAML := fmt.Sprintf(`apiVersion: qgate.qgate.io/v1alpha1
+kind: QualityGatePolicy
+metadata:
+  name: e2e-block-policy
+  namespace: %s
+spec:
+  selector:
+    matchLabels:
+      app: e2e-blocked-app
+  sonarServer: http://mock-sonar-error.%s.svc.cluster.local:5678
+  projectKey: e2e-blocked-app
+  mode: Block
+`, testNamespace, testNamespace)
+			Expect(applyManifest(policyYAML)).To(Succeed())
+			defer deleteManifest(policyYAML)
+
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "-n", testNamespace, "get", "qualitygatepolicy",
+					"e2e-block-policy", "-o", "jsonpath={.status.gateStatus}")
+				out, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(out).To(Equal("ERROR"))
+			}).Should(Succeed())
+
+			deploymentYAML := fmt.Sprintf(`apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: e2e-blocked-app
+  namespace: %s
+  labels:
+    app: e2e-blocked-app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: e2e-blocked-app
+  template:
+    metadata:
+      labels:
+        app: e2e-blocked-app
+    spec:
+      containers:
+      - name: app
+        image: nginx:latest
+`, testNamespace)
+
+			By("verifying the admission webhook rejects the Deployment")
+			cmd := exec.Command("kubectl", "apply", "-f", "-")
+			cmd.Stdin = strings.NewReader(deploymentYAML)
+			output, err := utils.Run(cmd)
+			Expect(err).To(HaveOccurred())
+			Expect(output).To(ContainSubstring("blocks this Deployment"))
+		})
 	})
 })
+
+// applyManifest applies the given YAML manifest via "kubectl apply -f -".
+func applyManifest(yaml string) error {
+	cmd := exec.Command("kubectl", "apply", "-f", "-")
+	cmd.Stdin = strings.NewReader(yaml)
+	_, err := utils.Run(cmd)
+	return err
+}
+
+// deleteManifest deletes the given YAML manifest via "kubectl delete -f -", ignoring not-found errors.
+func deleteManifest(yaml string) {
+	cmd := exec.Command("kubectl", "delete", "-f", "-", "--ignore-not-found")
+	cmd.Stdin = strings.NewReader(yaml)
+	_, _ = utils.Run(cmd)
+}
 
 // serviceAccountToken returns a token for the specified service account in the given namespace.
 // It uses the Kubernetes TokenRequest API to generate a token by directly sending a request

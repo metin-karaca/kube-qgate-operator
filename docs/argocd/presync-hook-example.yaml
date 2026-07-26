@@ -1,0 +1,77 @@
+# Example ArgoCD PreSync hook: blocks a sync until a QualityGatePolicy reports
+# GateStatus: OK, instead of relying only on the health check surfaced after
+# sync (see health-check.lua). Useful when you want ArgoCD to refuse to sync
+# an Application at all rather than sync it and then show it Degraded.
+#
+# Add this to the Application's source (e.g. as an extra manifest in the same
+# Helm/Kustomize output, or a separate manifest ArgoCD applies alongside it).
+# Replace POLICY_NAME below with the name of the QualityGatePolicy that
+# covers this Application's workload.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: qgate-presync-check
+  annotations:
+    argocd.argoproj.io/hook: PreSync
+    argocd.argoproj.io/hook-delete-policy: HookSucceeded
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: qgate-presync-check
+  annotations:
+    argocd.argoproj.io/hook: PreSync
+    argocd.argoproj.io/hook-delete-policy: HookSucceeded
+rules:
+  - apiGroups: ["qgate.qgate.io"]
+    resources: ["qualitygatepolicies"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: qgate-presync-check
+  annotations:
+    argocd.argoproj.io/hook: PreSync
+    argocd.argoproj.io/hook-delete-policy: HookSucceeded
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: qgate-presync-check
+subjects:
+  - kind: ServiceAccount
+    name: qgate-presync-check
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: qgate-presync-check
+  annotations:
+    argocd.argoproj.io/hook: PreSync
+    argocd.argoproj.io/hook-delete-policy: HookSucceeded,HookFailed
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      serviceAccountName: qgate-presync-check
+      restartPolicy: Never
+      containers:
+        - name: check
+          image: bitnami/kubectl:1.31
+          command:
+            - /bin/bash
+            - -c
+            - |
+              set -euo pipefail
+              POLICY_NAME="POLICY_NAME" # TODO: replace with your QualityGatePolicy's name
+              for i in $(seq 1 30); do
+                STATUS=$(kubectl get qualitygatepolicy "$POLICY_NAME" -o jsonpath='{.status.gateStatus}' || true)
+                if [ "$STATUS" = "OK" ]; then
+                  echo "quality gate OK, proceeding with sync"
+                  exit 0
+                fi
+                echo "quality gate status: '${STATUS:-unknown}', waiting..."
+                sleep 10
+              done
+              echo "quality gate did not reach OK in time"
+              exit 1
