@@ -31,11 +31,15 @@ import (
 var (
 	// Optional Environment Variables:
 	// - CERT_MANAGER_INSTALL_SKIP=true: Skips CertManager installation during test setup.
-	// These variables are useful if CertManager is already installed, avoiding
-	// re-installation and conflicts.
+	// - PROMETHEUS_INSTALL_SKIP=true: Skips Prometheus Operator installation during test setup.
+	// These variables are useful if CertManager/Prometheus Operator are already installed,
+	// avoiding re-installation and conflicts.
 	skipCertManagerInstall = os.Getenv("CERT_MANAGER_INSTALL_SKIP") == "true"
+	skipPrometheusInstall  = os.Getenv("PROMETHEUS_INSTALL_SKIP") == "true"
 	// isCertManagerAlreadyInstalled will be set true when CertManager CRDs be found on the cluster
 	isCertManagerAlreadyInstalled = false
+	// isPrometheusOperatorAlreadyInstalled will be set true when Prometheus Operator CRDs are found on the cluster
+	isPrometheusOperatorAlreadyInstalled = false
 
 	// projectImage is the name of the image which will be build and loaded
 	// with the code source changes to be tested.
@@ -78,6 +82,26 @@ var _ = BeforeSuite(func() {
 			_, _ = fmt.Fprintf(GinkgoWriter, "WARNING: CertManager is already installed. Skipping installation...\n")
 		}
 	}
+
+	// The manager Deployment created by "make deploy" includes a ServiceMonitor (see
+	// config/prometheus), which requires the Prometheus Operator CRDs to exist on the
+	// cluster beforehand. A fresh kind cluster does not have them by default.
+	if !skipPrometheusInstall {
+		By("checking if prometheus operator is installed already")
+		isPrometheusOperatorAlreadyInstalled = utils.IsPrometheusCRDsInstalled()
+		if !isPrometheusOperatorAlreadyInstalled {
+			_, _ = fmt.Fprintf(GinkgoWriter, "Installing Prometheus Operator...\n")
+			Expect(utils.InstallPrometheusOperator()).To(Succeed(), "Failed to install Prometheus Operator")
+
+			By("waiting for the ServiceMonitor CRD to be established")
+			cmd := exec.Command("kubectl", "wait", "--for", "condition=Established",
+				"crd/servicemonitors.monitoring.coreos.com", "--timeout", "60s")
+			_, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "ServiceMonitor CRD did not become established")
+		} else {
+			_, _ = fmt.Fprintf(GinkgoWriter, "WARNING: Prometheus Operator is already installed. Skipping installation...\n")
+		}
+	}
 })
 
 var _ = AfterSuite(func() {
@@ -85,5 +109,11 @@ var _ = AfterSuite(func() {
 	if !skipCertManagerInstall && !isCertManagerAlreadyInstalled {
 		_, _ = fmt.Fprintf(GinkgoWriter, "Uninstalling CertManager...\n")
 		utils.UninstallCertManager()
+	}
+
+	// Teardown Prometheus Operator after the suite if not skipped and if it was not already installed
+	if !skipPrometheusInstall && !isPrometheusOperatorAlreadyInstalled {
+		_, _ = fmt.Fprintf(GinkgoWriter, "Uninstalling Prometheus Operator...\n")
+		utils.UninstallPrometheusOperator()
 	}
 })

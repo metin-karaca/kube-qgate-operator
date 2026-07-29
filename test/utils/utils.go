@@ -127,9 +127,26 @@ func InstallCertManager() error {
 		"--namespace", "cert-manager",
 		"--timeout", "5m",
 	)
+	if _, err := Run(cmd); err != nil {
+		return err
+	}
 
-	_, err := Run(cmd)
-	return err
+	// The webhook Deployment being Available does not mean cainjector has finished
+	// propagating its CA bundle into cert-manager's own webhook configurations yet.
+	// Creating resources (e.g. our Certificates) too early races this and fails with
+	// "x509: certificate signed by unknown authority". Wait for the CA bundle to be
+	// populated before returning.
+	for _, kind := range []string{"validatingwebhookconfigurations", "mutatingwebhookconfigurations"} {
+		cmd = exec.Command("kubectl", "wait", kind+"/cert-manager-webhook",
+			"--for", "jsonpath={.webhooks[0].clientConfig.caBundle}",
+			"--timeout", "3m",
+		)
+		if _, err := Run(cmd); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 // IsCertManagerCRDsInstalled checks if any Cert Manager CRDs are installed

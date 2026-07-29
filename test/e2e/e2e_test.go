@@ -61,6 +61,15 @@ var _ = Describe("Manager", Ordered, func() {
 		_, err = utils.Run(cmd)
 		Expect(err).NotTo(HaveOccurred(), "Failed to label namespace with restricted policy")
 
+		// The NetworkPolicy in config/network-policy only allows ingress to the metrics
+		// port from Pods running in namespaces labeled "metrics: enabled" (see
+		// config/network-policy/allow-metrics-traffic.yaml). The curl-metrics pod created
+		// below runs in this same namespace, so it needs the label too.
+		By("labeling the namespace to allow ingress to the metrics endpoint")
+		cmd = exec.Command("kubectl", "label", "--overwrite", "ns", namespace, "metrics=enabled")
+		_, err = utils.Run(cmd)
+		Expect(err).NotTo(HaveOccurred(), "Failed to label namespace with metrics=enabled")
+
 		By("installing CRDs")
 		cmd = exec.Command("make", "install")
 		_, err = utils.Run(cmd)
@@ -77,6 +86,10 @@ var _ = Describe("Manager", Ordered, func() {
 	AfterAll(func() {
 		By("cleaning up the curl pod for metrics")
 		cmd := exec.Command("kubectl", "delete", "pod", "curl-metrics", "-n", namespace)
+		_, _ = utils.Run(cmd)
+
+		By("cleaning up the metrics ClusterRoleBinding")
+		cmd = exec.Command("kubectl", "delete", "clusterrolebinding", metricsRoleBindingName, "--ignore-not-found")
 		_, _ = utils.Run(cmd)
 
 		By("undeploying the controller-manager")
@@ -271,19 +284,54 @@ var _ = Describe("Manager", Ordered, func() {
 				"mock-sonar-error": `{"projectStatus":{"status":"ERROR"}}`,
 			}
 			for _, name := range mockDeployments {
-				cmd := exec.Command("kubectl", "create", "deployment", name,
-					"--image=hashicorp/http-echo:1.0", "-n", testNamespace, "--",
-					"-listen=:5678", fmt.Sprintf("-text=%s", responses[name]))
-				_, err := utils.Run(cmd)
-				Expect(err).NotTo(HaveOccurred(), "Failed to create mock SonarQube deployment "+name)
+				// A plain "kubectl create deployment -- args" replaces the image's
+				// entrypoint (command) rather than appending args to it, which breaks
+				// http-echo (it tries to exec "-listen=:5678" as a binary). Author the
+				// manifest directly so only "args" is set and the image's own
+				// ENTRYPOINT is preserved.
+				manifest := fmt.Sprintf(`apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: %[1]s
+  namespace: %[2]s
+  labels:
+    app: %[1]s
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: %[1]s
+  template:
+    metadata:
+      labels:
+        app: %[1]s
+    spec:
+      containers:
+        - name: http-echo
+          image: hashicorp/http-echo:1.0
+          args:
+            - -listen=:5678
+            - -text=%[3]s
+          ports:
+            - containerPort: 5678
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: %[1]s
+  namespace: %[2]s
+spec:
+  selector:
+    app: %[1]s
+  ports:
+    - port: 5678
+      targetPort: 5678
+`, name, testNamespace, responses[name])
+				Expect(applyManifest(manifest)).To(Succeed(), "Failed to create mock SonarQube deployment "+name)
 
-				cmd = exec.Command("kubectl", "expose", "deployment", name, "--port=5678", "-n", testNamespace)
-				_, err = utils.Run(cmd)
-				Expect(err).NotTo(HaveOccurred(), "Failed to expose mock SonarQube deployment "+name)
-
-				cmd = exec.Command("kubectl", "-n", testNamespace, "wait",
+				cmd := exec.Command("kubectl", "-n", testNamespace, "wait",
 					"--for=condition=Available", "--timeout=60s", "deployment/"+name)
-				_, err = utils.Run(cmd)
+				_, err := utils.Run(cmd)
 				Expect(err).NotTo(HaveOccurred(), "Mock SonarQube deployment "+name+" did not become available")
 			}
 		})
