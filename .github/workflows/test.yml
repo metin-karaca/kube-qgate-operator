@@ -2,11 +2,20 @@ name: Tests
 
 on:
   push:
+    branches: [main]
   pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test:
-    name: Run on Ubuntu
+    name: Unit and envtest
     runs-on: ubuntu-latest
     steps:
       - name: Clone the code
@@ -17,7 +26,49 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Running Tests
+      - name: Verify go.mod and go.sum are tidy
         run: |
           go mod tidy
-          make test
+          git diff --exit-code go.mod go.sum
+
+      - name: Running Tests
+        run: make test
+
+      - name: Verify the committed manifests match the generators
+        run: git diff --exit-code api/ config/
+
+  chart:
+    name: Helm chart
+    runs-on: ubuntu-latest
+    steps:
+      - name: Clone the code
+        uses: actions/checkout@v4
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+
+      - name: Lint the chart
+        run: helm lint charts/kube-qgate-operator
+
+      - name: Render the chart across value combinations
+        run: |
+          set -euo pipefail
+          combos=(
+            ""
+            "--set metrics.enabled=false"
+            "--set webhook.enabled=false"
+            "--set certManager.enabled=false --set metrics.secure=false --set webhook.enabled=false"
+            "--set networkPolicy.enabled=false --set metrics.serviceMonitor.enabled=true"
+            "--set webhook.includedNamespaces={team-a} --set webhook.failurePolicy=Ignore"
+          )
+          for combo in "${combos[@]}"; do
+            echo "::group::helm template ${combo:-<defaults>}"
+            # shellcheck disable=SC2086
+            helm template rel charts/kube-qgate-operator -n qgate-system $combo
+            echo "::endgroup::"
+          done
+
+      - name: Verify the chart's CRD copy matches the generated one
+        run: |
+          diff -u config/crd/bases/qgate.qgate.io_qualitygatepolicies.yaml \
+                  charts/kube-qgate-operator/crds/qualitygatepolicies.yaml

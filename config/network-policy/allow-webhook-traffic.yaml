@@ -1,0 +1,26 @@
+# Admission requests reach the webhook server on 9443, and the kubelet probes /healthz and /readyz
+# on 8081. Neither source is a Pod IP, so neither can be expressed as a namespaceSelector: the API
+# server's address is cluster-specific and is often a node IP outside the Pod CIDR. Leaving these
+# ports out of the operator's ingress rules silently breaks admission on every CNI that actually
+# enforces NetworkPolicy — and with failurePolicy: Fail that rejects Deployments cluster-wide.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  labels:
+    app.kubernetes.io/name: kube-qgate-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: allow-webhook-traffic
+  namespace: system
+spec:
+  podSelector:
+    matchLabels:
+      control-plane: controller-manager
+      app.kubernetes.io/name: kube-qgate-operator
+  policyTypes:
+    - Ingress
+  ingress:
+    - ports:
+        - port: 9443
+          protocol: TCP
+        - port: 8081
+          protocol: TCP

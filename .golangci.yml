@@ -10,6 +10,7 @@ linters:
     - ginkgolinter
     - goconst
     - gocyclo
+    - gosec
     - govet
     - ineffassign
     - lll
@@ -36,6 +37,14 @@ linters:
           - dupl
           - lll
         path: internal/*
+      # The test harness deliberately shells out to make/kubectl and dials envtest's self-signed
+      # webhook server, which gosec's G204/G402/G101 rules cannot distinguish from real issues.
+      - linters:
+          - gosec
+        path: _test\.go
+      - linters:
+          - gosec
+        path: ^test/
     paths:
       - third_party$
       - builtin$

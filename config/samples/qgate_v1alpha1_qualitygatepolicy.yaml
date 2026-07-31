@@ -6,9 +6,22 @@ metadata:
     app.kubernetes.io/managed-by: kustomize
   name: qualitygatepolicy-sample
 spec:
+  # Deployments in this namespace carrying these labels are covered by the policy.
   selector:
     matchLabels:
       app: kube-qgate-operator
   sonarServer: http://localhost:9000
   projectKey: kube-qgate-operator
+  # Audit: status and metric only. Warn: adds a Kubernetes Event. Block: adds admission rejection.
   mode: Audit
+  # How stale a successfully fetched gate result may be before Block mode stops trusting it and
+  # falls back to failurePolicy. Guards against an unreachable SonarQube leaving a permanent "OK".
+  maxStaleness: 30m
+  # What Block mode does when no usable gate status is available: Fail (deny) or Ignore (allow).
+  failurePolicy: Fail
+  # For a private project, reference a Secret with a "token" key holding a SonarQube user token.
+  # sonarTokenSecretRef:
+  #   name: sonar-token
+  # For a self-hosted SonarQube behind a private CA, reference a Secret with a "ca.crt" key.
+  # sonarCASecretRef:
+  #   name: sonar-ca

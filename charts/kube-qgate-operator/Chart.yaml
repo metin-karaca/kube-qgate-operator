@@ -2,11 +2,13 @@ apiVersion: v2
 name: kube-qgate-operator
 description: Kubernetes operator that gates Deployments on SonarQube quality gate status — block, warn, or audit workloads that don't meet code quality standards.
 type: application
-version: 0.1.0
-appVersion: "0.1.0"
+version: 0.3.0
+appVersion: "0.3.0"
 home: https://github.com/metin-karaca/kube-qgate-operator
 sources:
   - https://github.com/metin-karaca/kube-qgate-operator
+annotations:
+  artifacthub.io/license: Apache-2.0
 keywords:
   - sonarqube
   - quality-gate

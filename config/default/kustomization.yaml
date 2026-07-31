@@ -1,4 +1,3 @@
-# Adds namespace to all resources.
 namespace: kube-qgate-operator-system
 
 # Value of this field is prepended to the
@@ -53,6 +52,12 @@ patches:
 - path: manager_webhook_patch.yaml
   target:
     kind: Deployment
+
+# Excludes the operator's own namespace and kube-system from admission gating, so a crashed
+# operator cannot reject the Deployment update needed to repair it.
+- path: webhook_namespace_selector_patch.yaml
+  target:
+    kind: ValidatingWebhookConfiguration
 
 # [CERTMANAGER] To enable cert-manager, uncomment all sections with 'CERTMANAGER' prefix.
 # Uncomment the following replacements to add the cert-manager CA injection annotations

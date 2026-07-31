@@ -19,6 +19,8 @@ package controller
 import (
 	"github.com/prometheus/client_golang/prometheus"
 	"sigs.k8s.io/controller-runtime/pkg/metrics"
+
+	qgatev1alpha1 "github.com/metin-karaca/kube-qgate-operator/api/v1alpha1"
 )
 
 // qualityGateStatus reports the last known SonarQube quality gate result for each
@@ -33,4 +35,28 @@ var qualityGateStatus = prometheus.NewGaugeVec(
 
 func init() {
 	metrics.Registry.MustRegister(qualityGateStatus)
+}
+
+// setGateStatusMetric publishes the gate result for a policy. Any series previously reported for
+// the same policy is dropped first, so editing spec.projectKey does not leave the old project's
+// series behind reporting a value that is no longer maintained.
+func setGateStatusMetric(policy *qgatev1alpha1.QualityGatePolicy, gateStatus string) {
+	qualityGateStatus.DeletePartialMatch(policyLabels(policy))
+
+	value := 0.0
+	if gateStatus == qgatev1alpha1.GateStatusOK {
+		value = 1.0
+	}
+	qualityGateStatus.WithLabelValues(policy.Namespace, policy.Name, policy.Spec.ProjectKey).Set(value)
+}
+
+// deleteGateStatusMetric removes every series belonging to a policy and reports how many were
+// dropped. Called on deletion so a removed policy stops appearing in Prometheus (and in alerts
+// built on qualitygate_status) instead of reporting its last value indefinitely.
+func deleteGateStatusMetric(policy *qgatev1alpha1.QualityGatePolicy) int {
+	return qualityGateStatus.DeletePartialMatch(policyLabels(policy))
+}
+
+func policyLabels(policy *qgatev1alpha1.QualityGatePolicy) prometheus.Labels {
+	return prometheus.Labels{"namespace": policy.Namespace, "name": policy.Name}
 }

@@ -1,3 +1,5 @@
+# Only real manifests belong in this directory: the webhook envtest suite loads every file here as
+# a Kubernetes object, so a kustomize patch file would break it. Patches live in config/default.
 resources:
 - manifests.yaml
 - service.yaml

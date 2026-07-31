@@ -1,0 +1,13 @@
+# Keep a repair path open. With failurePolicy: Fail, a webhook that also gates the operator's own
+# namespace means a crashed operator rejects the Deployment update needed to bring it back — and
+# gating kube-system can break control-plane components the same way. Neither namespace can host a
+# workload this operator is meant to gate, so both are excluded outright.
+- op: add
+  path: /webhooks/0/namespaceSelector
+  value:
+    matchExpressions:
+      - key: kubernetes.io/metadata.name
+        operator: NotIn
+        values:
+          - kube-qgate-operator-system
+          - kube-system

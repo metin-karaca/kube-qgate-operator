@@ -12,6 +12,7 @@ webhooks:
       namespace: system
       path: /validate-apps-v1-deployment
   failurePolicy: Fail
+  matchPolicy: Equivalent
   name: vdeployment.qgate.io
   rules:
   - apiGroups:
@@ -24,3 +25,4 @@ webhooks:
     resources:
     - deployments
   sideEffects: None
+  timeoutSeconds: 5

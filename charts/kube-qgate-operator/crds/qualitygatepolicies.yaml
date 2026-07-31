@@ -14,7 +14,26 @@ spec:
     singular: qualitygatepolicy
   scope: Namespaced
   versions:
-  - name: v1alpha1
+  - additionalPrinterColumns:
+    - jsonPath: .spec.mode
+      name: Mode
+      type: string
+    - jsonPath: .spec.projectKey
+      name: Project
+      type: string
+    - jsonPath: .status.gateStatus
+      name: Gate
+      type: string
+    - jsonPath: .status.conditions[?(@.type=="Ready")].status
+      name: Ready
+      type: string
+    - jsonPath: .status.lastChecked
+      name: Last Checked
+      type: date
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
     schema:
       openAPIV3Schema:
         description: QualityGatePolicy is the Schema for the qualitygatepolicies API.
@@ -42,12 +61,21 @@ spec:
               failurePolicy:
                 default: Fail
                 description: |-
-                  FailurePolicy governs Block-mode behavior when the gate status has never been
-                  successfully determined yet. Fail denies the request (fail-closed); Ignore allows it
-                  (fail-open).
+                  FailurePolicy governs Block-mode behavior when no usable gate status is available —
+                  either because none has ever been determined, or because the last one is older than
+                  MaxStaleness. Fail denies the request (fail-closed); Ignore allows it (fail-open).
                 enum:
                 - Fail
                 - Ignore
+                type: string
+              maxStaleness:
+                default: 30m
+                description: |-
+                  MaxStaleness bounds how old a successfully fetched gate status may be and still be
+                  trusted by the Block-mode admission webhook. Once Status.LastChecked is older than this,
+                  the webhook stops trusting Status.GateStatus and applies FailurePolicy instead — without
+                  it, an unreachable SonarQube would leave a stale "OK" admitting Deployments forever.
+                  Set to 0 to disable the staleness check.
                 type: string
               mode:
                 default: Audit
@@ -60,6 +88,7 @@ spec:
                 type: string
               projectKey:
                 description: ProjectKey is the project key on SonarQube.
+                minLength: 1
                 type: string
               selector:
                 description: Selector, aims which deployment does this policy addresses.
@@ -107,8 +136,28 @@ spec:
                     type: object
                 type: object
                 x-kubernetes-map-type: atomic
+              sonarCASecretRef:
+                description: |-
+                  SonarCASecretRef references a Secret (in the same namespace) whose "ca.crt" key holds a
+                  PEM-encoded CA bundle used to verify the SonarQube server's TLS certificate. Set this for
+                  a self-hosted SonarQube whose certificate is signed by a private CA. Omit to use the
+                  system trust store.
+                properties:
+                  name:
+                    default: ""
+                    description: |-
+                      Name of the referent.
+                      This field is effectively required, but due to backwards compatibility is
+                      allowed to be empty. Instances of this type with an empty value here are
+                      almost certainly wrong.
+                      More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                    type: string
+                type: object
+                x-kubernetes-map-type: atomic
               sonarServer:
-                description: SonarServer, represents SonarQube's base URL.
+                description: SonarServer, represents SonarQube's base URL, e.g. https://sonarqube.example.com.
+                minLength: 1
+                pattern: ^https?://
                 type: string
               sonarTokenSecretRef:
                 description: |-
@@ -207,6 +256,12 @@ spec:
                 items:
                   type: string
                 type: array
+              observedGeneration:
+                description: |-
+                  ObservedGeneration is the .metadata.generation the controller last reconciled, so clients
+                  can tell whether the reported status reflects the current spec.
+                format: int64
+                type: integer
             type: object
         type: object
     served: true

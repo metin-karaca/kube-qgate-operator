@@ -1,3 +1,4 @@
+{{- if .Values.metrics.enabled }}
 apiVersion: v1
 kind: Service
 metadata:
@@ -13,8 +14,11 @@ spec:
       targetPort: 8443
   selector:
     {{- include "kube-qgate-operator.selectorLabels" . | nindent 4 }}
+{{- end }}
 {{- if .Values.webhook.enabled }}
+{{- if .Values.metrics.enabled }}
 ---
+{{- end }}
 apiVersion: v1
 kind: Service
 metadata:

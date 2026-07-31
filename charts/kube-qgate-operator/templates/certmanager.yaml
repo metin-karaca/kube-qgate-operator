@@ -1,4 +1,5 @@
-{{- if .Values.certManager.enabled }}
+{{- $metricsCerts := and .Values.metrics.enabled .Values.metrics.secure -}}
+{{- if and .Values.certManager.enabled (or .Values.webhook.enabled $metricsCerts) }}
 apiVersion: cert-manager.io/v1
 kind: Issuer
 metadata:
@@ -26,7 +27,7 @@ spec:
     name: {{ include "kube-qgate-operator.fullname" . }}-selfsigned-issuer
   secretName: {{ include "kube-qgate-operator.fullname" . }}-webhook-server-cert
 {{- end }}
-{{- if .Values.metrics.secure }}
+{{- if $metricsCerts }}
 ---
 apiVersion: cert-manager.io/v1
 kind: Certificate

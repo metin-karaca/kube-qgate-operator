@@ -2,7 +2,7 @@
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: {{ include "kube-qgate-operator.fullname" . }}-allow-metrics-traffic
+  name: {{ include "kube-qgate-operator.fullname" . }}-allow-ingress
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "kube-qgate-operator.labels" . | nindent 4 }}
@@ -13,11 +13,29 @@ spec:
   policyTypes:
     - Ingress
   ingress:
+    {{- if .Values.metrics.enabled }}
     - from:
         - namespaceSelector:
             matchLabels:
-              metrics: enabled
+              {{- toYaml .Values.networkPolicy.metricsFrom | nindent 14 }}
       ports:
         - port: 8443
+          protocol: TCP
+    {{- end }}
+    {{- if .Values.webhook.enabled }}
+    # Admission requests arrive on 9443. Omitting this rule — or narrowing it to a
+    # namespaceSelector — breaks admission wherever the API server's source address is not a Pod
+    # IP, which with failurePolicy=Fail rejects every matching Deployment in the cluster.
+    - ports:
+        - port: 9443
+          protocol: TCP
+      {{- with .Values.networkPolicy.webhookFrom }}
+      from:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    {{- end }}
+    # The kubelet probes /healthz and /readyz from the node, whose address is not a Pod IP either.
+    - ports:
+        - port: 8081
           protocol: TCP
 {{- end }}

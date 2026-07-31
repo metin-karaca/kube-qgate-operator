@@ -1,12 +1,20 @@
 image:
   repository: ghcr.io/metin-karaca/kube-qgate-operator
+  # Defaults to the chart's appVersion. Pin a tag or digest in production.
   tag: ""
   pullPolicy: IfNotPresent
+
+imagePullSecrets: []
 
 replicaCount: 1
 
 leaderElection:
   enabled: true
+
+logging:
+  # Development-mode logging: console encoding and stacktraces below error level. Leave false in
+  # production, where the operator emits structured JSON instead.
+  development: false
 
 resources:
   limits:
@@ -21,6 +29,14 @@ serviceAccount:
   name: ""
   annotations: {}
 
+podAnnotations: {}
+podLabels: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}
+topologySpreadConstraints: []
+priorityClassName: ""
+
 # Secure metrics endpoint served over HTTPS with authn/authz.
 metrics:
   enabled: true
@@ -31,12 +47,37 @@ metrics:
 # Block-mode validating admission webhook on Deployments.
 webhook:
   enabled: true
+  # How long the API server waits for an admission response before applying failurePolicy.
+  timeoutSeconds: 5
+  # Fail is fail-closed: while the operator is unreachable, matching Deployments are rejected.
+  # Ignore is fail-open. Fail is the right default for a gate, which is precisely why
+  # excludedNamespaces must keep a repair path open.
+  failurePolicy: Fail
+  # Namespaces never sent to the webhook. The release namespace is always excluded on top of this
+  # list, so a crashed operator can never lock itself — or the control plane — out of being
+  # repaired. Add your other break-glass namespaces here.
+  excludedNamespaces:
+    - kube-system
+  # Opt-in allowlist. When non-empty, only these namespaces are gated (excludedNamespaces still
+  # wins). When empty, every namespace except the excluded ones is gated.
+  includedNamespaces: []
 
-# Required when webhook.enabled or metrics.secure: issues self-signed TLS
-# certificates for the webhook and metrics servers.
+# Required when webhook.enabled or metrics.secure: issues self-signed TLS certificates for the
+# webhook and metrics servers.
 certManager:
   enabled: true
 
-# Restricts /metrics ingress to namespaces labeled "metrics: enabled".
 networkPolicy:
+  # Restricts ingress to the operator's Pods.
   enabled: true
+  # Namespace labels allowed to scrape /metrics on 8443.
+  metricsFrom:
+    metrics: enabled
+  # Ingress sources allowed to reach the webhook port (9443). Admission requests come from the API
+  # server, whose source address is cluster-specific and frequently a node IP outside the Pod CIDR,
+  # so this defaults to unrestricted — a policy that omits the webhook port silently breaks
+  # admission on any CNI that actually enforces NetworkPolicy. Narrow it to your control-plane
+  # range if you know it, e.g. [{ipBlock: {cidr: 10.0.0.0/24}}].
+  webhookFrom: []
+  # Egress is left unrestricted: the operator must reach the API server plus whatever SonarQube
+  # endpoint each policy names, which cannot be known at install time.

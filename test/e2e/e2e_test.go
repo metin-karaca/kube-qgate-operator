@@ -270,6 +270,30 @@ var _ = Describe("Manager", Ordered, func() {
 			))
 		})
 
+		It("should exclude its own namespace and kube-system from the webhook", func() {
+			By("reading the ValidatingWebhookConfiguration's namespaceSelector")
+			cmd := exec.Command("kubectl", "get", "validatingwebhookconfiguration",
+				"kube-qgate-operator-validating-webhook-configuration",
+				"-o", "jsonpath={.webhooks[0].namespaceSelector.matchExpressions[0]}")
+			output, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "ValidatingWebhookConfiguration should exist")
+
+			// With failurePolicy=Fail, gating the operator's own namespace would let a crashed
+			// operator reject the Deployment update needed to bring it back up.
+			Expect(output).To(ContainSubstring(`"operator":"NotIn"`))
+			Expect(output).To(ContainSubstring(namespace))
+			Expect(output).To(ContainSubstring("kube-system"))
+		})
+
+		It("should report a bounded webhook timeout", func() {
+			cmd := exec.Command("kubectl", "get", "validatingwebhookconfiguration",
+				"kube-qgate-operator-validating-webhook-configuration",
+				"-o", "jsonpath={.webhooks[0].timeoutSeconds}")
+			output, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(output).To(Equal("5"))
+		})
+
 		// +kubebuilder:scaffold:e2e-webhooks-checks
 	})
 
@@ -422,6 +446,68 @@ spec:
 			output, err := utils.Run(cmd)
 			Expect(err).To(HaveOccurred())
 			Expect(output).To(ContainSubstring("blocks this Deployment"))
+		})
+
+		It("denies a Deployment once an OK gate status has gone stale", func() {
+			// The controller polls every 5 minutes, so a 5-second maxStaleness makes the freshly
+			// fetched OK untrustworthy almost immediately — the same situation a real cluster is in
+			// when SonarQube becomes unreachable and the cached OK ages out.
+			policyYAML := fmt.Sprintf(`apiVersion: qgate.qgate.io/v1alpha1
+kind: QualityGatePolicy
+metadata:
+  name: e2e-stale-policy
+  namespace: %s
+spec:
+  selector:
+    matchLabels:
+      app: e2e-stale-app
+  sonarServer: http://mock-sonar-ok.%s.svc.cluster.local:5678
+  projectKey: e2e-stale-app
+  mode: Block
+  maxStaleness: 5s
+`, testNamespace, testNamespace)
+			Expect(applyManifest(policyYAML)).To(Succeed())
+			defer deleteManifest(policyYAML)
+
+			By("waiting for the controller to record an OK gate status")
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "-n", testNamespace, "get", "qualitygatepolicy",
+					"e2e-stale-policy", "-o", "jsonpath={.status.gateStatus}")
+				out, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(out).To(Equal("OK"))
+			}).Should(Succeed())
+
+			deploymentYAML := fmt.Sprintf(`apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: e2e-stale-app
+  namespace: %s
+  labels:
+    app: e2e-stale-app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: e2e-stale-app
+  template:
+    metadata:
+      labels:
+        app: e2e-stale-app
+    spec:
+      containers:
+      - name: app
+        image: nginx:1.27
+`, testNamespace)
+
+			By("verifying the webhook stops trusting the OK once it ages past maxStaleness")
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "apply", "--dry-run=server", "-f", "-")
+				cmd.Stdin = strings.NewReader(deploymentYAML)
+				out, err := utils.Run(cmd)
+				g.Expect(err).To(HaveOccurred())
+				g.Expect(out).To(ContainSubstring("exceeding maxStaleness"))
+			}).Should(Succeed())
 		})
 	})
 })

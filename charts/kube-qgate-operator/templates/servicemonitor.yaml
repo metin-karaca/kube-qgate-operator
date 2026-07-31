@@ -1,4 +1,4 @@
-{{- if .Values.metrics.serviceMonitor.enabled }}
+{{- if and .Values.metrics.enabled .Values.metrics.serviceMonitor.enabled }}
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
@@ -13,7 +13,7 @@ spec:
       scheme: https
       bearerTokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
       tlsConfig:
-        {{- if .Values.certManager.enabled }}
+        {{- if and .Values.certManager.enabled .Values.metrics.secure }}
         serverName: {{ include "kube-qgate-operator.fullname" . }}-controller-manager-metrics-service.{{ .Release.Namespace }}.svc
         ca:
           secret:

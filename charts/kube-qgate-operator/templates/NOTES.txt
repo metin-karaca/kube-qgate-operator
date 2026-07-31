@@ -1,16 +1,33 @@
-kube-qgate-operator has been installed.
+kube-qgate-operator {{ .Chart.AppVersion }} has been installed.
 
 Check the controller is running:
-  kubectl -n {{ .Release.Namespace }} get pods -l app.kubernetes.io/name={{ include "kube-qgate-operator.name" . }}
+  kubectl -n {{ .Release.Namespace }} rollout status deployment/{{ include "kube-qgate-operator.fullname" . }}-controller-manager
 
-Create a QualityGatePolicy (see config/samples/qgate_v1alpha1_qualitygatepolicy.yaml for an
-example):
-  kubectl apply -f my-policy.yaml
-  kubectl get qualitygatepolicy -o wide
+Create a QualityGatePolicy (config/samples/qgate_v1alpha1_qualitygatepolicy.yaml is a fully
+commented example), then watch it fill in:
+  kubectl get qualitygatepolicy
+  NAME   MODE   PROJECT   GATE   READY   LAST CHECKED   AGE
+{{ if .Values.webhook.enabled }}
+Block mode is active: Deployments matched by a Block-mode policy are rejected when its last known
+SonarQube gate is not OK, or when its last successful check is older than the policy's
+spec.maxStaleness (failurePolicy={{ .Values.webhook.failurePolicy }}).
 
-{{- if .Values.webhook.enabled }}
-Block mode is active: Deployments matched by a Block-mode policy whose last known SonarQube
-quality gate is not OK will be rejected by the admission webhook.
+These namespaces are never gated, so a broken operator can always be repaired:
+  {{ .Release.Namespace }}{{ range .Values.webhook.excludedNamespaces }}, {{ . }}{{ end }}
+{{- with .Values.webhook.includedNamespaces }}
+Gating is further restricted to: {{ join ", " . }}
+{{- end }}
 {{- else }}
 Block mode is disabled (webhook.enabled=false); only Audit and Warn modes take effect.
+{{- end }}
+{{- if and .Values.networkPolicy.enabled (not .Values.networkPolicy.webhookFrom) .Values.webhook.enabled }}
+
+NOTE: networkPolicy.enabled is on and networkPolicy.webhookFrom is empty, so ingress to the webhook
+port (9443) is left unrestricted. Admission requests come from the API server, whose source address
+is cluster-specific — restricting that port without knowing the address silently breaks admission.
+Narrow networkPolicy.webhookFrom to your control-plane range if you know it.
+{{- end }}
+{{- if not .Values.metrics.enabled }}
+
+NOTE: metrics.enabled=false, so the qualitygate_status gauge is not exposed.
 {{- end }}

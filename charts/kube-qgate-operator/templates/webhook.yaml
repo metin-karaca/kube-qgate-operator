@@ -13,7 +13,26 @@ webhooks:
   - name: vdeployment.qgate.io
     admissionReviewVersions: ["v1"]
     sideEffects: None
-    failurePolicy: Fail
+    matchPolicy: Equivalent
+    failurePolicy: {{ .Values.webhook.failurePolicy }}
+    timeoutSeconds: {{ .Values.webhook.timeoutSeconds }}
+    # The release namespace is always excluded: with failurePolicy=Fail a crashed operator would
+    # otherwise reject the very Deployment update needed to bring it back up.
+    namespaceSelector:
+      matchExpressions:
+        - key: kubernetes.io/metadata.name
+          operator: NotIn
+          values:
+            - {{ .Release.Namespace }}
+            {{- range .Values.webhook.excludedNamespaces }}
+            - {{ . }}
+            {{- end }}
+        {{- with .Values.webhook.includedNamespaces }}
+        - key: kubernetes.io/metadata.name
+          operator: In
+          values:
+            {{- toYaml . | nindent 12 }}
+        {{- end }}
     clientConfig:
       service:
         name: {{ include "kube-qgate-operator.fullname" . }}-webhook-service

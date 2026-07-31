@@ -55,8 +55,14 @@ The controller and the admission webhook are deliberately decoupled: the
 webhook never calls SonarQube itself. It only reads the `QualityGatePolicy`'s
 already-polled `status.gateStatus`, so admission stays fast and doesn't
 depend on SonarQube being reachable at the exact moment a Deployment is
-applied. Availability of SonarQube only affects how fresh that cached status
-is, governed by `spec.failurePolicy` (see below).
+applied.
+
+That cached read is only safe if it has an expiry date. `spec.maxStaleness`
+(default `30m`) bounds how old `status.lastChecked` may be before the webhook
+stops trusting `status.gateStatus` at all; past that point the policy is
+treated as having no usable result and `spec.failurePolicy` decides —
+`Fail` denies, `Ignore` allows. Without that bound, a SonarQube outage would
+freeze the last `OK` in place and keep admitting Deployments indefinitely.
 
 ## Quickstart
 
@@ -65,7 +71,9 @@ cluster is enough for a demo) and, if Block mode is enabled (the default),
 [cert-manager](https://cert-manager.io/docs/installation/) for the webhook's
 TLS certificate.
 
-No published image exists yet — build and load it into your cluster first:
+Images are published to `ghcr.io/metin-karaca/kube-qgate-operator` by the
+release workflow on every `v*` tag, and the chart defaults to the matching
+tag. Until the first release is cut, build and load the image yourself:
 
 ```bash
 docker build -t kube-qgate-operator:demo .
@@ -102,25 +110,34 @@ spec:
       app: checkout-service
   sonarServer: https://sonarqube.example.com
   projectKey: checkout-service
-  mode: Audit   # Audit | Warn | Block
+  mode: Audit          # Audit | Warn | Block
+  maxStaleness: 30m    # how old a fetched result may be before Block mode distrusts it; 0 disables
+  failurePolicy: Fail  # Fail | Ignore — Block-mode behavior when no usable result is available
   # sonarTokenSecretRef:
-  #   name: sonar-token          # Secret with a "token" key, for private projects
-  # failurePolicy: Fail          # Fail | Ignore — Block-mode behavior before the first successful poll
+  #   name: sonar-token   # Secret with a "token" key, for private projects
+  # sonarCASecretRef:
+  #   name: sonar-ca      # Secret with a "ca.crt" key, for SonarQube behind a private CA
 ```
 
 ```bash
 kubectl apply -f my-policy.yaml
-kubectl get qualitygatepolicy checkout-service-policy -o yaml
+kubectl get qualitygatepolicy
 ```
 
 Within one reconcile (immediately on create, then every 5 minutes) `status`
 fills in:
+
+```
+NAME                      MODE    PROJECT            GATE   READY   LAST CHECKED   AGE
+checkout-service-policy   Audit   checkout-service   OK     True    12s            30s
+```
 
 ```yaml
 status:
   gateStatus: OK
   lastChecked: "2026-07-26T16:57:59Z"
   matchedWorkloads: [checkout-service]
+  observedGeneration: 1
   conditions:
     - type: Ready
       status: "True"
@@ -128,8 +145,7 @@ status:
 ```
 
 Switch `mode` to `Block` and any `checkout-service`-labeled Deployment whose
-policy's last known `gateStatus` isn't `OK` is rejected at admission with a
-clear error message.
+policy has no usable `OK` is rejected at admission with a clear error message.
 
 ## Modes
 
@@ -139,13 +155,66 @@ clear error message.
 | `Warn`  | Audit, plus a `Warning` Kubernetes Event (`QualityGateFailed`) on the policy when the gate isn't `OK`. |
 | `Block` | Warn, plus the validating admission webhook rejects matching Deployments whose gate isn't `OK`. |
 
+### What Block mode does *not* block
+
+Updates that touch neither the Pod template nor the Deployment's labels are
+always admitted — scaling, pausing, annotating. They cannot introduce new
+code and cannot change which policies apply, so blocking them would only stop
+operators from managing a running workload while its gate happens to be red.
+A rollback *does* change the Pod template and is therefore gated like any
+other change; if a red gate is blocking an urgent rollback, set the policy's
+`mode` to `Warn` (or `failurePolicy: Ignore`) for the duration.
+
+### Diagnosing a policy
+
+`status.conditions[Ready].reason` distinguishes the failure modes rather than
+lumping them together:
+
+| Reason | Meaning |
+|--------|---------|
+| `GateStatusFetched` | Healthy — `status.gateStatus` is current. |
+| `ProjectNotFound` | SonarQube returned 404: `spec.projectKey` is wrong. |
+| `AuthenticationFailed` | 401/403: the token is missing, invalid, or lacks *Browse* on the project. |
+| `SecretUnavailable` | `sonarTokenSecretRef`/`sonarCASecretRef` points at a missing Secret or key. |
+| `SonarQubeUnreachable` / `SonarQubeTimeout` | Network or DNS failure reaching `spec.sonarServer`. |
+| `SonarQubeError` | Any other non-200 response. |
+| `InvalidResponse` / `InvalidConfiguration` | Unparseable response, or a malformed `spec.selector`. |
+
+## Operational notes
+
+- **NetworkPolicy and the webhook.** The chart's NetworkPolicy leaves the
+  webhook port (9443) and the probe port (8081) open to all sources by
+  default. Admission requests originate from the API server and probes from
+  the kubelet; neither address is a Pod IP, and both are cluster-specific. A
+  policy that omits those ports breaks admission on any CNI that actually
+  enforces NetworkPolicy — and with `failurePolicy: Fail` that rejects
+  Deployments cluster-wide. Narrow `networkPolicy.webhookFrom` to your
+  control-plane range if you know it.
+- **The operator's namespace is never gated.** The release namespace and
+  `kube-system` are excluded via `namespaceSelector`, so a crashed operator
+  can't reject the Deployment update needed to repair it. Add your own
+  break-glass namespaces to `webhook.excludedNamespaces`, or restrict gating
+  to an allowlist with `webhook.includedNamespaces`.
+- **`webhook.enabled` requires `certManager.enabled`.** controller-runtime's
+  webhook server has no self-signed fallback; the chart fails at template
+  time rather than crash-looping.
+- **CRD upgrades.** Helm never updates files under a chart's `crds/`
+  directory on `helm upgrade`. After a chart upgrade that changes the schema,
+  apply it yourself:
+  `kubectl apply -f charts/kube-qgate-operator/crds/qualitygatepolicies.yaml`.
+
 ## Development
 
 ```bash
-make test        # unit + envtest (controller and webhook), no cluster required
+make test         # unit + envtest (controller and webhook), no cluster required
 make test-e2e     # spins up its own kind cluster, installs cert-manager + Prometheus Operator, runs full scenarios
+make lint         # golangci-lint (errcheck, gosec, revive, …)
 make run          # run the controller against your current kube context
+helm lint charts/kube-qgate-operator
 ```
+
+`make test` regenerates the CRD and RBAC manifests; CI fails if the committed
+copies drift, including the chart's copy of the CRD.
 
 ## Known limitation
 
@@ -189,10 +258,11 @@ confirmed `OK`, for when Degraded-after-sync isn't strict enough.
 
 - [x] v0.1 — CRD + controller, Audit mode
 - [x] v0.2 — Warn mode, Block mode + admission webhook, cert-manager TLS, Prometheus metrics
-- [x] v0.3 — Helm chart, e2e tests (envtest + kind), ArgoCD integration docs
+- [x] v0.3 — Helm chart, e2e tests (envtest + kind), ArgoCD integration docs, staleness bounds,
+      private-CA support, release workflow publishing the image to GHCR on tag
 - [ ] Pluggable backends beyond SonarQube (Trivy, coverage services)
 - [ ] Match Deployments to a specific SonarQube analysis (image tag/commit), not just "latest"
-- [ ] Published container image + Helm repo
+- [ ] Hosted Helm repo
 
 ## License
 

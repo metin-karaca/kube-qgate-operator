@@ -1,3 +1,6 @@
+{{- include "kube-qgate-operator.validateValues" . -}}
+{{- $webhookCerts := and .Values.webhook.enabled .Values.certManager.enabled -}}
+{{- $metricsCerts := and .Values.metrics.enabled .Values.metrics.secure .Values.certManager.enabled -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -14,9 +17,38 @@ spec:
     metadata:
       annotations:
         kubectl.kubernetes.io/default-container: manager
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
       labels:
         {{- include "kube-qgate-operator.selectorLabels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
     spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       securityContext:
         runAsNonRoot: true
         seccompProfile:
@@ -35,24 +67,33 @@ spec:
             {{- end }}
             {{- if .Values.metrics.enabled }}
             - --metrics-bind-address=:8443
+            - --metrics-secure={{ .Values.metrics.secure }}
             {{- else }}
             - --metrics-bind-address=0
             {{- end }}
-            - --metrics-secure={{ .Values.metrics.secure }}
-            {{- if and .Values.webhook.enabled .Values.certManager.enabled }}
+            {{- if $webhookCerts }}
             - --webhook-cert-path=/tmp/k8s-webhook-server/serving-certs
             {{- end }}
-            {{- if and .Values.metrics.secure .Values.certManager.enabled }}
+            {{- if $metricsCerts }}
             - --metrics-cert-path=/tmp/k8s-metrics-server/metrics-certs
             {{- end }}
+            - --zap-devel={{ .Values.logging.development }}
           ports:
             {{- if .Values.webhook.enabled }}
             - containerPort: 9443
               name: webhook-server
               protocol: TCP
             {{- end }}
+            {{- if .Values.metrics.enabled }}
+            - containerPort: 8443
+              name: https
+              protocol: TCP
+            {{- end }}
           securityContext:
             allowPrivilegeEscalation: false
+            # The manager only ever reads from disk (its mounted certificates), so it needs no
+            # writable filesystem.
+            readOnlyRootFilesystem: true
             capabilities:
               drop: ["ALL"]
           livenessProbe:
@@ -69,25 +110,29 @@ spec:
             periodSeconds: 10
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
+          {{- if or $webhookCerts $metricsCerts }}
           volumeMounts:
-            {{- if and .Values.webhook.enabled .Values.certManager.enabled }}
+            {{- if $webhookCerts }}
             - mountPath: /tmp/k8s-webhook-server/serving-certs
               name: webhook-certs
               readOnly: true
             {{- end }}
-            {{- if and .Values.metrics.secure .Values.certManager.enabled }}
+            {{- if $metricsCerts }}
             - mountPath: /tmp/k8s-metrics-server/metrics-certs
               name: metrics-certs
               readOnly: true
             {{- end }}
+          {{- end }}
+      {{- if or $webhookCerts $metricsCerts }}
       volumes:
-        {{- if and .Values.webhook.enabled .Values.certManager.enabled }}
+        {{- if $webhookCerts }}
         - name: webhook-certs
           secret:
             secretName: {{ include "kube-qgate-operator.fullname" . }}-webhook-server-cert
         {{- end }}
-        {{- if and .Values.metrics.secure .Values.certManager.enabled }}
+        {{- if $metricsCerts }}
         - name: metrics-certs
           secret:
             secretName: {{ include "kube-qgate-operator.fullname" . }}-metrics-server-cert
         {{- end }}
+      {{- end }}
