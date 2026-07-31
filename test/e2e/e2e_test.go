@@ -217,7 +217,11 @@ var _ = Describe("Manager", Ordered, func() {
 				cmd := exec.Command("kubectl", "logs", controllerPodName, "-n", namespace)
 				output, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(output).To(ContainSubstring("controller-runtime.metrics\tServing metrics server"),
+				// The manager logs JSON in production mode, so match the fields rather than the
+				// tab-separated layout zap only produces under --zap-devel.
+				g.Expect(output).To(ContainSubstring(`"logger":"controller-runtime.metrics"`),
+					"Metrics server not yet started")
+				g.Expect(output).To(ContainSubstring(`"msg":"Serving metrics server"`),
 					"Metrics server not yet started")
 			}
 			Eventually(verifyMetricsServerStarted).Should(Succeed())
