@@ -5,7 +5,7 @@
 # architecture, and emulating a full Go toolchain turns a one-minute build into a 30-minute one.
 # Pinning it to BUILDPLATFORM lets Go cross-compile natively instead, which it does for free with
 # CGO disabled - that is what TARGETOS/TARGETARCH below are for.
-FROM --platform=${BUILDPLATFORM} golang:1.24 AS builder
+FROM --platform=${BUILDPLATFORM} golang:1.26 AS builder
 ARG TARGETOS
 ARG TARGETARCH
 
