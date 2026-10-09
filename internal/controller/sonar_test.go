@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"testing"
 	"time"
 
@@ -108,12 +109,34 @@ func TestFetchGateStatusPrivateCA(t *testing.T) {
 	})
 	query.caBundle = caBundle
 
-	status, err := fetchGateStatus(context.Background(), query)
+	result, err := fetchGateStatus(context.Background(), query)
 	if err != nil {
 		t.Fatalf("unexpected error with the server's CA trusted: %v", err)
 	}
-	if status != qgatev1alpha1.GateStatusOK {
-		t.Errorf("got gate status %q, want %q", status, qgatev1alpha1.GateStatusOK)
+	if result.status != qgatev1alpha1.GateStatusOK {
+		t.Errorf("got gate status %q, want %q", result.status, qgatev1alpha1.GateStatusOK)
+	}
+}
+
+func TestFetchGateStatusParsesConditions(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"projectStatus":{"status":"ERROR","conditions":[
+			{"status":"ERROR","metricKey":"new_coverage","comparator":"LT","errorThreshold":"80","actualValue":"62.4"},
+			{"status":"OK","metricKey":"new_bugs","comparator":"GT","errorThreshold":"0","actualValue":"0"}]}}`)
+	}))
+	defer server.Close()
+
+	result, err := fetchGateStatus(context.Background(), sonarQuery{server: server.URL, projectKey: "x"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := []qgatev1alpha1.GateCondition{
+		{Metric: "new_coverage", Status: "ERROR", Comparator: "LT", Threshold: "80", Actual: "62.4"},
+		{Metric: "new_bugs", Status: "OK", Comparator: "GT", Threshold: "0", Actual: "0"},
+	}
+	if result.status != "ERROR" || !reflect.DeepEqual(result.conditions, want) {
+		t.Fatalf("got %+v, want status ERROR and conditions %+v", result, want)
 	}
 }
 

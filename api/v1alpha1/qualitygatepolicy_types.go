@@ -105,6 +105,24 @@ type QualityGatePolicySpec struct {
 	MaxStaleness *metav1.Duration `json:"maxStaleness,omitempty"`
 }
 
+// GateCondition is one condition of the SonarQube quality gate, as evaluated on the project's
+// latest analysis.
+type GateCondition struct {
+	// Metric is the SonarQube metric key, e.g. new_coverage or new_bugs.
+	Metric string `json:"metric"`
+	// Status is this condition's own result: OK or ERROR.
+	Status string `json:"status"`
+	// Comparator is how Actual is compared against Threshold: GT or LT.
+	// +optional
+	Comparator string `json:"comparator,omitempty"`
+	// Threshold is the value that makes the condition fail.
+	// +optional
+	Threshold string `json:"threshold,omitempty"`
+	// Actual is the measured value on the latest analysis.
+	// +optional
+	Actual string `json:"actual,omitempty"`
+}
+
 // QualityGatePolicyStatus defines the observed state of QualityGatePolicy.
 type QualityGatePolicyStatus struct {
 	// GateStatus is the latest quality gate result fetched from SonarQube (OK, ERROR, Unknown).
@@ -112,6 +130,11 @@ type QualityGatePolicyStatus struct {
 
 	// LastChecked is the time when the controller last queried SonarQube.
 	LastChecked *metav1.Time `json:"lastChecked,omitempty"`
+
+	// GateConditions lists the individual SonarQube quality gate conditions behind GateStatus.
+	// It is distinct from Conditions, which holds this object's Kubernetes conditions (Ready).
+	// +optional
+	GateConditions []GateCondition `json:"gateConditions,omitempty"`
 
 	// Conditions holds the observed status of this policy in the standard Kubernetes condition format.
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
@@ -130,6 +153,7 @@ type QualityGatePolicyStatus struct {
 // +kubebuilder:printcolumn:name="Project",type=string,JSONPath=`.spec.projectKey`
 // +kubebuilder:printcolumn:name="Gate",type=string,JSONPath=`.status.gateStatus`
 // +kubebuilder:printcolumn:name="Ready",type=string,JSONPath=`.status.conditions[?(@.type=="Ready")].status`
+// +kubebuilder:printcolumn:name="Coverage",type=string,priority=1,JSONPath=`.status.gateConditions[?(@.metric=="new_coverage")].actual`
 // +kubebuilder:printcolumn:name="Last Checked",type=date,JSONPath=`.status.lastChecked`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 

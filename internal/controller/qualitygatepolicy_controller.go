@@ -143,7 +143,7 @@ func (r *QualityGatePolicyReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		return r.setNotReady(ctx, &policy, qgatev1alpha1.ReasonSecretUnavailable, err, errorRetryInterval)
 	}
 
-	gateStatus, err := fetchGateStatus(ctx, sonarQuery{
+	result, err := fetchGateStatus(ctx, sonarQuery{
 		server:     policy.Spec.SonarServer,
 		projectKey: policy.Spec.ProjectKey,
 		token:      credentials.token,
@@ -155,12 +155,14 @@ func (r *QualityGatePolicyReconciler) Reconcile(ctx context.Context, req ctrl.Re
 			"sonarServer", policy.Spec.SonarServer, "projectKey", policy.Spec.ProjectKey)
 		return r.setNotReady(ctx, &policy, reason, err, errorRetryInterval)
 	}
+	gateStatus := result.status
 
 	log.Info("fetched quality gate status", "gateStatus", gateStatus,
 		"projectKey", policy.Spec.ProjectKey, "matchedWorkloads", len(matched))
 
 	now := metav1.Now()
 	policy.Status.GateStatus = gateStatus
+	policy.Status.GateConditions = result.conditions
 	policy.Status.LastChecked = &now
 	policy.Status.ObservedGeneration = policy.Generation
 	meta.SetStatusCondition(&policy.Status.Conditions, metav1.Condition{
@@ -373,8 +375,21 @@ type sonarQuery struct {
 
 type sonarQubeResponse struct {
 	ProjectStatus struct {
-		Status string `json:"status"`
+		Status     string `json:"status"`
+		Conditions []struct {
+			Status         string `json:"status"`
+			MetricKey      string `json:"metricKey"`
+			Comparator     string `json:"comparator"`
+			ErrorThreshold string `json:"errorThreshold"`
+			ActualValue    string `json:"actualValue"`
+		} `json:"conditions"`
 	} `json:"projectStatus"`
+}
+
+// gateResult is what a successful SonarQube lookup yields.
+type gateResult struct {
+	status     string
+	conditions []qgatev1alpha1.GateCondition
 }
 
 // sonarHTTPError is returned when SonarQube answers with a non-200 status, so the caller can map
@@ -432,13 +447,13 @@ func sonarHTTPClient(caBundle []byte) (*http.Client, error) {
 	return &http.Client{Timeout: sonarRequestTimeout, Transport: transport}, nil
 }
 
-func fetchGateStatus(ctx context.Context, q sonarQuery) (string, error) {
+func fetchGateStatus(ctx context.Context, q sonarQuery) (gateResult, error) {
 	ctx, cancel := context.WithTimeout(ctx, sonarRequestTimeout)
 	defer cancel()
 
 	endpoint, err := url.Parse(strings.TrimRight(q.server, "/") + sonarProjectStatusPath)
 	if err != nil {
-		return "", fmt.Errorf("invalid sonarServer %q: %w", q.server, err)
+		return gateResult{}, fmt.Errorf("invalid sonarServer %q: %w", q.server, err)
 	}
 	// Encode rather than interpolate: project keys legitimately contain characters such as ':'
 	// and '+', and an unescaped '&' would otherwise inject query parameters.
@@ -446,7 +461,7 @@ func fetchGateStatus(ctx context.Context, q sonarQuery) (string, error) {
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.String(), nil)
 	if err != nil {
-		return "", err
+		return gateResult{}, err
 	}
 	httpReq.Header.Set("Accept", "application/json")
 	if q.token != "" {
@@ -456,28 +471,37 @@ func fetchGateStatus(ctx context.Context, q sonarQuery) (string, error) {
 
 	httpClient, err := sonarHTTPClient(q.caBundle)
 	if err != nil {
-		return "", err
+		return gateResult{}, err
 	}
 
 	resp, err := httpClient.Do(httpReq)
 	if err != nil {
-		return "", err
+		return gateResult{}, err
 	}
 	defer func() {
 		_ = resp.Body.Close()
 	}()
 
 	if resp.StatusCode != http.StatusOK {
-		return "", &sonarHTTPError{statusCode: resp.StatusCode}
+		return gateResult{}, &sonarHTTPError{statusCode: resp.StatusCode}
 	}
 
 	var body sonarQubeResponse
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
-		return "", fmt.Errorf("decoding SonarQube response: %w", err)
+		return gateResult{}, fmt.Errorf("decoding SonarQube response: %w", err)
 	}
 	if body.ProjectStatus.Status == "" {
-		return "", fmt.Errorf("SonarQube response contained no projectStatus.status")
+		return gateResult{}, fmt.Errorf("SonarQube response contained no projectStatus.status")
 	}
-
-	return body.ProjectStatus.Status, nil
+	result := gateResult{status: body.ProjectStatus.Status}
+	for _, c := range body.ProjectStatus.Conditions {
+		result.conditions = append(result.conditions, qgatev1alpha1.GateCondition{
+			Metric:     c.MetricKey,
+			Status:     c.Status,
+			Comparator: c.Comparator,
+			Threshold:  c.ErrorThreshold,
+			Actual:     c.ActualValue,
+		})
+	}
+	return result, nil
 }

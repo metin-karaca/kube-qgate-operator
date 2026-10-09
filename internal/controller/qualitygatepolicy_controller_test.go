@@ -300,8 +300,13 @@ var _ = Describe("QualityGatePolicy Controller", func() {
 		Expect(readyCond.Message).To(ContainSubstring(sonarTokenSecretKey))
 	})
 
-	It("records gate status ERROR when the quality gate fails", func() {
-		server := staticSonarServer("ERROR", nil)
+	It("records gate status ERROR and the failing conditions when the quality gate fails", func() {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = fmt.Fprint(w, `{"projectStatus":{"status":"ERROR","conditions":[
+				{"status":"ERROR","metricKey":"new_coverage","comparator":"LT","errorThreshold":"80","actualValue":"62.4"}]}}`)
+		}))
+		DeferCleanup(server.Close)
 
 		createPolicy(&qgatev1alpha1.QualityGatePolicy{
 			ObjectMeta: metav1.ObjectMeta{Name: "error-policy", Namespace: namespace},
@@ -316,7 +321,11 @@ var _ = Describe("QualityGatePolicy Controller", func() {
 		_, err := reconcileOnce(reconciler(), "error-policy")
 		Expect(err).NotTo(HaveOccurred())
 
-		Expect(fetchPolicy("error-policy").Status.GateStatus).To(Equal("ERROR"))
+		updated := fetchPolicy("error-policy")
+		Expect(updated.Status.GateStatus).To(Equal("ERROR"))
+		Expect(updated.Status.GateConditions).To(ConsistOf(qgatev1alpha1.GateCondition{
+			Metric: "new_coverage", Status: "ERROR", Comparator: "LT", Threshold: "80", Actual: "62.4",
+		}))
 		Expect(testutil.ToFloat64(
 			qualityGateStatus.WithLabelValues(namespace, "error-policy", "error-app"),
 		)).To(Equal(0.0))

@@ -27,6 +27,10 @@ spec:
     - jsonPath: .status.conditions[?(@.type=="Ready")].status
       name: Ready
       type: string
+    - jsonPath: .status.gateConditions[?(@.metric=="new_coverage")].actual
+      name: Coverage
+      priority: 1
+      type: string
     - jsonPath: .status.lastChecked
       name: Last Checked
       type: date
@@ -239,6 +243,39 @@ spec:
                   - reason
                   - status
                   - type
+                  type: object
+                type: array
+              gateConditions:
+                description: |-
+                  GateConditions lists the individual SonarQube quality gate conditions behind GateStatus.
+                  It is distinct from Conditions, which holds this object's Kubernetes conditions (Ready).
+                items:
+                  description: |-
+                    GateCondition is one condition of the SonarQube quality gate, as evaluated on the project's
+                    latest analysis.
+                  properties:
+                    actual:
+                      description: Actual is the measured value on the latest analysis.
+                      type: string
+                    comparator:
+                      description: 'Comparator is how Actual is compared against Threshold:
+                        GT or LT.'
+                      type: string
+                    metric:
+                      description: Metric is the SonarQube metric key, e.g. new_coverage
+                        or new_bugs.
+                      type: string
+                    status:
+                      description: 'Status is this condition''s own result: OK or
+                        ERROR.'
+                      type: string
+                    threshold:
+                      description: Threshold is the value that makes the condition
+                        fail.
+                      type: string
+                  required:
+                  - metric
+                  - status
                   type: object
                 type: array
               gateStatus:
